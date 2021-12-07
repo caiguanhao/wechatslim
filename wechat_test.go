@@ -16,6 +16,22 @@ func init() {
 	goodClient = New(os.Getenv("WECHAT_APPID"), os.Getenv("WECHAT_APPSECRET"))
 }
 
+func TestCreateWXAQrcode(t *testing.T) {
+	if os.Getenv("ALLOW_ALL") != "1" {
+		t.Log("TestCreateWXAQrcode disabled by default as it will use your quota. Use ALLOW_ALL=1 env to enable.")
+		return
+	}
+	ctx := context.Background()
+	b, err := goodClient.CreateWXAQrcode(ctx, "/pages/index/index?id=1")
+	if err != nil {
+		t.Error(err)
+	} else if http.DetectContentType(b) != "image/jpeg" {
+		t.Error("expected image to be jpeg")
+	} else {
+		t.Log("image test passed")
+	}
+}
+
 func TestGetWXACodeUnlimit(t *testing.T) {
 	errMustContain := func(actual error, expected string) {
 		t.Helper()

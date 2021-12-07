@@ -35,7 +35,12 @@ type (
 		UnionId    string `json:"unionid"`
 	}
 
-	wechatQrcodeRequest struct {
+	wechatCreateWXAQrcodeRequest struct {
+		Path  string `json:"path"`
+		Width int    `json:"width"`
+	}
+
+	wechatGetWXACodeUnlimitRequest struct {
 		Page        string `json:"page"`
 		Scene       string `json:"scene"`
 		Width       int    `json:"width"`
@@ -61,10 +66,8 @@ func (e WechatError) Error() string {
 	return "Error Code #" + strconv.Itoa(e.Code) + ": " + e.Messsage
 }
 
-// GetWXACodeUnlimit generates new Wechat mini program QR code (given page and
-// scene) and returns the PNG image. If page is empty, index page will be used.
-// https://developers.weixin.qq.com/miniprogram/dev/api-backend/open-api/qr-code/wxacode.getUnlimited.html
-func (c Client) GetWXACodeUnlimit(ctx context.Context, page, scene string) ([]byte, error) {
+// GetAccessToken gets access token.
+func (c Client) GetAccessToken(ctx context.Context) (*wechatAccessToken, error) {
 	url := "https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=" +
 		c.AppId + "&secret=" + c.AppSecret
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -90,22 +93,32 @@ func (c Client) GetWXACodeUnlimit(ctx context.Context, page, scene string) ([]by
 	if err != nil {
 		return nil, err
 	}
-	url = "https://api.weixin.qq.com/wxa/getwxacodeunlimit?access_token=" + data.AccessToken
-	b, err = json.Marshal(wechatQrcodeRequest{
-		Page:        page,
-		Scene:       scene,
-		Width:       1280,
-		Transparent: true,
+	return &data, nil
+}
+
+// CreateWXAQrcode generates new Wechat mini program QR code (given path) and
+// returns the JPEG image. Please note that Wechat allows total of only 100,000
+// QR codes created by this API for every account.
+// https://developers.weixin.qq.com/miniprogram/dev/api-backend/open-api/qr-code/wxacode.createQRCode.html
+func (c Client) CreateWXAQrcode(ctx context.Context, path string) ([]byte, error) {
+	access, err := c.GetAccessToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	url := "https://api.weixin.qq.com/cgi-bin/wxaapp/createwxaqrcode?access_token=" + access.AccessToken
+	b, err := json.Marshal(wechatCreateWXAQrcodeRequest{
+		Path:  path,
+		Width: 1280,
 	})
 	if err != nil {
 		return nil, err
 	}
-	req, err = http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	res, err = http.DefaultClient.Do(req)
+	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +127,47 @@ func (c Client) GetWXACodeUnlimit(ctx context.Context, page, scene string) ([]by
 	if err != nil {
 		return nil, err
 	}
+	var respError WechatError
+	json.Unmarshal(b, &respError)
+	if respError.Code != 0 {
+		return nil, respError
+	}
+	return b, nil
+}
+
+// GetWXACodeUnlimit generates new Wechat mini program QR code (given page and
+// scene) and returns the PNG image. If page is empty, index page will be used.
+// https://developers.weixin.qq.com/miniprogram/dev/api-backend/open-api/qr-code/wxacode.getUnlimited.html
+func (c Client) GetWXACodeUnlimit(ctx context.Context, page, scene string) ([]byte, error) {
+	access, err := c.GetAccessToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	url := "https://api.weixin.qq.com/wxa/getwxacodeunlimit?access_token=" + access.AccessToken
+	b, err := json.Marshal(wechatGetWXACodeUnlimitRequest{
+		Page:        page,
+		Scene:       scene,
+		Width:       1280,
+		Transparent: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	b, err = ioutil.ReadAll(res.Body)
+	if err != nil {
+		return nil, err
+	}
+	var respError WechatError
 	json.Unmarshal(b, &respError)
 	if respError.Code != 0 {
 		return nil, respError
