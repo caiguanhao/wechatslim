@@ -9,15 +9,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
+	"reflect"
 	"strconv"
+	"strings"
+	"time"
 )
 
 type (
 	Client struct {
 		AppId     string
 		AppSecret string
+
+		AccessToken *wechatAccessToken
+	}
+
+	Request struct {
+		*http.Request
 	}
 
 	WechatError struct {
@@ -27,31 +37,46 @@ type (
 
 	wechatAccessToken struct {
 		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+
+		createdAt time.Time
 	}
 
-	wechatSession struct {
+	WechatSession struct {
 		OpenId     string `json:"openid"`
 		SessionKey string `json:"session_key"`
 		UnionId    string `json:"unionid"`
 	}
 
-	wechatCreateWXAQrcodeRequest struct {
+	WechatUserInfo struct {
+		PhoneNumber     string `json:"phoneNumber"`
+		PurePhoneNumber string `json:"purePhoneNumber"`
+		CountryCode     string `json:"countryCode"`
+	}
+
+	ReqBodyAnalysisGetDailyVisitTrend struct {
+		BeginDate string `json:"begin_date"`
+		EndDate   string `json:"end_date"`
+	}
+
+	ReqBodyCreateWXAQrcode struct {
 		Path  string `json:"path"`
 		Width int    `json:"width"`
 	}
 
-	wechatGetWXACodeUnlimitRequest struct {
+	ReqBodyGetWXACodeUnlimit struct {
 		Page        string `json:"page"`
 		Scene       string `json:"scene"`
 		Width       int    `json:"width"`
 		Transparent bool   `json:"is_hyaline"`
 	}
+)
 
-	wechatUserInfo struct {
-		PhoneNumber     string `json:"phoneNumber"`
-		PurePhoneNumber string `json:"purePhoneNumber"`
-		CountryCode     string `json:"countryCode"`
-	}
+const (
+	UrlApi                        = "https://api.weixin.qq.com"
+	UrlAnalysisGetDailyVisitTrend = UrlApi + "/datacube/getweanalysisappiddailyvisittrend?access_token={ACCESS_TOKEN}"
+	UrlCreateWXAQrcode            = UrlApi + "/cgi-bin/wxaapp/createwxaqrcode?access_token={ACCESS_TOKEN}"
+	UrlGetWXACodeUnlimit          = UrlApi + "/wxa/getwxacodeunlimit?access_token={ACCESS_TOKEN}"
 )
 
 // New creates new client.
@@ -62,37 +87,99 @@ func New(appId, appSecret string) *Client {
 	}
 }
 
-func (e WechatError) Error() string {
-	return "Error Code #" + strconv.Itoa(e.Code) + ": " + e.Messsage
+// MustNewRequest is like NewRequest but panics if operation fails.
+func (c *Client) MustNewRequest(ctx context.Context, method, url string, reqBody interface{}) *Request {
+	req, err := c.NewRequest(ctx, "POST", UrlAnalysisGetDailyVisitTrend, reqBody)
+	if err != nil {
+		panic(err)
+	}
+	return req
 }
 
-// GetAccessToken gets access token.
-func (c Client) GetAccessToken(ctx context.Context) (*wechatAccessToken, error) {
-	url := "https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=" +
-		c.AppId + "&secret=" + c.AppSecret
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+// NewRequest create a new request given context, method, url and request body.
+// {ACCESS_TOKEN} in the URL will be replaced with the current access token.
+// Request body can be io.Reader or data structures that can be JSON-marshaled.
+func (c *Client) NewRequest(ctx context.Context, method, url string, reqBody interface{}) (*Request, error) {
+	if strings.Contains(url, "{ACCESS_TOKEN}") {
+		access, err := c.GetAccessToken(ctx)
+		if err != nil {
+			return nil, err
+		}
+		url = strings.Replace(url, "{ACCESS_TOKEN}", access.AccessToken, -1)
+	}
+	r, err := reqBodyToReader(reqBody)
 	if err != nil {
 		return nil, err
 	}
-	res, err := http.DefaultClient.Do(req)
+	req, err := http.NewRequestWithContext(ctx, method, url, r)
 	if err != nil {
 		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return &Request{req}, nil
+}
+
+// MustDo is like Do but panics if operation fails.
+func (req *Request) MustDo(dest ...interface{}) {
+	if err := req.Do(dest...); err != nil {
+		panic(err)
+	}
+}
+
+// Do sends the HTTP request and receives the response, unmarshals JSON
+// response into the optional dest. Specify JSON path after each dest to
+// efficiently get required info from deep nested structs. Original body is
+// returned if dest is *[]byte.
+func (req *Request) Do(dest ...interface{}) error {
+	res, err := http.DefaultClient.Do(req.Request)
+	if err != nil {
+		return err
 	}
 	defer res.Body.Close()
 	b, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	var respError WechatError
 	json.Unmarshal(b, &respError)
 	if respError.Code != 0 {
-		return nil, respError
+		return respError
 	}
-	var data wechatAccessToken
-	err = json.Unmarshal(b, &data)
+	if len(dest) == 0 {
+		return nil
+	}
+	if len(dest) > 1 {
+		for n := 0; n < len(dest)/2; n++ {
+			arrange(b, dest[2*n], dest[2*n+1].(string))
+		}
+		return nil
+	}
+	if x, ok := dest[0].(*[]byte); ok {
+		*x = b
+		return nil
+	}
+	return json.Unmarshal(b, dest[0])
+}
+
+// GetAccessToken gets access token and caches it to client.AccessToken.
+func (c *Client) GetAccessToken(ctx context.Context) (*wechatAccessToken, error) {
+	if c.AccessToken != nil && !c.AccessToken.Expired() {
+		return c.AccessToken, nil
+	}
+	url := UrlApi + "/cgi-bin/token?grant_type=client_credential&appid=" +
+		c.AppId + "&secret=" + c.AppSecret
+	req, err := c.NewRequest(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
+	data := wechatAccessToken{
+		createdAt: time.Now(),
+	}
+	err = req.Do(&data)
+	if err != nil {
+		return nil, err
+	}
+	c.AccessToken = &data
 	return &data, nil
 }
 
@@ -100,37 +187,18 @@ func (c Client) GetAccessToken(ctx context.Context) (*wechatAccessToken, error) 
 // returns the JPEG image. Please note that Wechat allows total of only 100,000
 // QR codes created by this API for every account.
 // https://developers.weixin.qq.com/miniprogram/dev/api-backend/open-api/qr-code/wxacode.createQRCode.html
-func (c Client) CreateWXAQrcode(ctx context.Context, path string) ([]byte, error) {
-	access, err := c.GetAccessToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-	url := "https://api.weixin.qq.com/cgi-bin/wxaapp/createwxaqrcode?access_token=" + access.AccessToken
-	b, err := json.Marshal(wechatCreateWXAQrcodeRequest{
+func (c *Client) CreateWXAQrcode(ctx context.Context, path string) ([]byte, error) {
+	req, err := c.NewRequest(ctx, "POST", UrlCreateWXAQrcode, ReqBodyCreateWXAQrcode{
 		Path:  path,
 		Width: 1280,
 	})
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
+	var b []byte
+	err = req.Do(&b)
 	if err != nil {
 		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-	b, err = ioutil.ReadAll(res.Body)
-	if err != nil {
-		return nil, err
-	}
-	var respError WechatError
-	json.Unmarshal(b, &respError)
-	if respError.Code != 0 {
-		return nil, respError
 	}
 	return b, nil
 }
@@ -138,13 +206,8 @@ func (c Client) CreateWXAQrcode(ctx context.Context, path string) ([]byte, error
 // GetWXACodeUnlimit generates new Wechat mini program QR code (given page and
 // scene) and returns the PNG image. If page is empty, index page will be used.
 // https://developers.weixin.qq.com/miniprogram/dev/api-backend/open-api/qr-code/wxacode.getUnlimited.html
-func (c Client) GetWXACodeUnlimit(ctx context.Context, page, scene string) ([]byte, error) {
-	access, err := c.GetAccessToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-	url := "https://api.weixin.qq.com/wxa/getwxacodeunlimit?access_token=" + access.AccessToken
-	b, err := json.Marshal(wechatGetWXACodeUnlimitRequest{
+func (c *Client) GetWXACodeUnlimit(ctx context.Context, page, scene string) ([]byte, error) {
+	req, err := c.NewRequest(ctx, "POST", UrlGetWXACodeUnlimit, ReqBodyGetWXACodeUnlimit{
 		Page:        page,
 		Scene:       scene,
 		Width:       1280,
@@ -153,61 +216,41 @@ func (c Client) GetWXACodeUnlimit(ctx context.Context, page, scene string) ([]by
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
+	var b []byte
+	err = req.Do(&b)
 	if err != nil {
 		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-	b, err = ioutil.ReadAll(res.Body)
-	if err != nil {
-		return nil, err
-	}
-	var respError WechatError
-	json.Unmarshal(b, &respError)
-	if respError.Code != 0 {
-		return nil, respError
 	}
 	return b, nil
 }
 
 // JsCodeToSession gets user's OpenId, UnionId and session key by the code from
 // wx.login().
-func (c Client) JsCodeToSession(ctx context.Context, code string) (*wechatSession, error) {
-	url := "https://api.weixin.qq.com/sns/jscode2session?grant_type=authorization_code&js_code=" + code +
+func (c *Client) JsCodeToSession(ctx context.Context, code string) (*WechatSession, error) {
+	url := UrlApi + "/sns/jscode2session?grant_type=authorization_code&js_code=" + code +
 		"&appid=" + c.AppId + "&secret=" + c.AppSecret
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := c.NewRequest(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-	b, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		return nil, err
-	}
-	var respError WechatError
-	json.Unmarshal(b, &respError)
-	if respError.Code != 0 {
-		return nil, respError
-	}
-	var data wechatSession
-	err = json.Unmarshal(b, &data)
+	var data WechatSession
+	err = req.Do(&data)
 	if err != nil {
 		return nil, err
 	}
 	return &data, nil
 }
 
+func (e WechatError) Error() string {
+	return "Error Code #" + strconv.Itoa(e.Code) + ": " + e.Messsage
+}
+
+func (t wechatAccessToken) Expired() bool {
+	return t.createdAt.Add(time.Duration(t.ExpiresIn-30) * time.Second).Before(time.Now())
+}
+
 // Decrypt decrypts encrypted data given session key and IV.
-func Decrypt(sessionKey, encryptedData, iv string) (*wechatUserInfo, error) {
+func Decrypt(sessionKey, encryptedData, iv string) (*WechatUserInfo, error) {
 	// from github.com/silenceper/wechat
 	aesKey, err := base64.StdEncoding.DecodeString(sessionKey)
 	if err != nil {
@@ -234,12 +277,74 @@ func Decrypt(sessionKey, encryptedData, iv string) (*wechatUserInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	var userInfo wechatUserInfo
+	var userInfo WechatUserInfo
 	err = json.Unmarshal(cipherText, &userInfo)
 	if err != nil {
 		return nil, err
 	}
 	return &userInfo, nil
+}
+
+func reqBodyToReader(reqBody interface{}) (io.Reader, error) {
+	if reqBody == nil {
+		return nil, nil
+	}
+	if r, ok := reqBody.(io.Reader); ok {
+		return r, nil
+	}
+	b, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.NewReader(b), nil
+}
+
+func arrange(data []byte, target interface{}, key string) {
+	keys := strings.Split(key, ".")
+	baseType := reflect.TypeOf(target).Elem()
+	if baseType.Kind() == reflect.Slice {
+		baseType = baseType.Elem()
+	}
+	typ := baseType
+	for i := len(keys) - 1; i > -1; i-- {
+		key := keys[i]
+		if key == "*" {
+			typ = reflect.SliceOf(typ)
+		} else if key != "" {
+			typ = reflect.MapOf(reflect.TypeOf(key), typ)
+		}
+	}
+	d := reflect.New(typ)
+	json.Unmarshal(data, d.Interface())
+	items := collect(d.Elem(), keys)
+	v := reflect.Indirect(reflect.ValueOf(target))
+	for n := range items {
+		item := items[n]
+		if !item.IsValid() {
+			item = reflect.New(baseType).Elem()
+		}
+		if v.Kind() == reflect.Slice {
+			v.Set(reflect.Append(v, item))
+		} else {
+			v.Set(item)
+		}
+	}
+}
+
+func collect(x reflect.Value, keys []string) (out []reflect.Value) {
+	for i, key := range keys {
+		if key == "*" {
+			k := keys[i+1:]
+			for i := 0; i < x.Len(); i++ {
+				out = append(out, collect(x.Index(i), k)...)
+			}
+			return
+		} else if key != "" {
+			x = x.MapIndex(reflect.ValueOf(key))
+		}
+	}
+	out = append(out, x)
+	return
 }
 
 func pkcs7Unpad(data []byte, blockSize int) ([]byte, error) {

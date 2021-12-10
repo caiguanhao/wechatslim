@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 var emptyClient, badClient, goodClient *Client
@@ -94,6 +95,29 @@ func TestDecrypt(t *testing.T) {
 		stringMustEqual(userInfo.PurePhoneNumber, "12345678901")
 		stringMustEqual(userInfo.CountryCode, "86")
 	}
+}
+
+func TestAnalysisGetDailyVisitTrend(t *testing.T) {
+	date := os.Getenv("TEST_DATE")
+	if date == "" {
+		date = time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	}
+	ctx := context.Background()
+	var b struct {
+		Date                         string  `json:"ref_date"`
+		SessionsCount                int     `json:"session_cnt"`
+		PageViews                    int     `json:"visit_pv"`
+		UniqueVisitors               int     `json:"visit_uv"`
+		NewUniqueVisitors            int     `json:"visit_uv_new"`
+		SecondsOnAppPerSession       float64 `json:"stay_time_session"`
+		SecondsOnAppPerUniqueVisitor float64 `json:"stay_time_uv"`
+		AveragePageDepth             float64 `json:"visit_depth"`
+	}
+	goodClient.MustNewRequest(ctx, "POST", UrlAnalysisGetDailyVisitTrend, ReqBodyAnalysisGetDailyVisitTrend{
+		BeginDate: date,
+		EndDate:   date,
+	}).MustDo(&b, "list.*")
+	t.Logf("%+v\n", b)
 }
 
 // func encrypt(sessionKey, plainText, iv string) (string, error) {
