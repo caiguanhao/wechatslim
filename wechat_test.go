@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -15,6 +16,18 @@ func init() {
 	emptyClient = New("", "")
 	badClient = New(os.Getenv("WECHAT_APPID"), "00000000000000000000000000000000")
 	goodClient = New(os.Getenv("WECHAT_APPID"), os.Getenv("WECHAT_APPSECRET"))
+}
+
+func TestRaceConditions(t *testing.T) {
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			defer wg.Done()
+			goodClient.GetWXACodeUnlimit(context.Background(), "", "")
+		}()
+	}
+	wg.Wait()
 }
 
 func TestCreateWXAQrcode(t *testing.T) {

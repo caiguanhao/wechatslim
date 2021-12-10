@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -23,7 +24,8 @@ type (
 		AppId     string
 		AppSecret string
 
-		AccessToken *wechatAccessToken
+		accessToken *wechatAccessToken
+		mutex       sync.RWMutex
 	}
 
 	Request struct {
@@ -85,6 +87,13 @@ func New(appId, appSecret string) *Client {
 		AppId:     appId,
 		AppSecret: appSecret,
 	}
+}
+
+// AccessToken returns current access token.
+func (c *Client) AccessToken() *wechatAccessToken {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	return c.accessToken
 }
 
 // MustNewRequest is like NewRequest but panics if operation fails.
@@ -163,8 +172,9 @@ func (req *Request) Do(dest ...interface{}) error {
 
 // GetAccessToken gets access token and caches it to client.AccessToken.
 func (c *Client) GetAccessToken(ctx context.Context) (*wechatAccessToken, error) {
-	if c.AccessToken != nil && !c.AccessToken.Expired() {
-		return c.AccessToken, nil
+	t := c.AccessToken()
+	if t != nil && !t.Expired() {
+		return t, nil
 	}
 	url := UrlApi + "/cgi-bin/token?grant_type=client_credential&appid=" +
 		c.AppId + "&secret=" + c.AppSecret
@@ -179,7 +189,9 @@ func (c *Client) GetAccessToken(ctx context.Context) (*wechatAccessToken, error)
 	if err != nil {
 		return nil, err
 	}
-	c.AccessToken = &data
+	c.mutex.Lock()
+	c.accessToken = &data
+	c.mutex.Unlock()
 	return &data, nil
 }
 
