@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
+	"net/http/httputil"
 	"reflect"
 	"strconv"
 	"strings"
@@ -23,6 +25,7 @@ type (
 	Client struct {
 		AppId     string
 		AppSecret string
+		Debug     bool
 
 		accessToken *wechatAccessToken
 		mutex       sync.RWMutex
@@ -30,6 +33,7 @@ type (
 
 	Request struct {
 		*http.Request
+		client *Client
 	}
 
 	WechatError struct {
@@ -129,7 +133,7 @@ func (c *Client) NewRequest(ctx context.Context, method, url string, reqBody int
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	return &Request{req}, nil
+	return &Request{req, c}, nil
 }
 
 // MustDo is like Do but panics if operation fails.
@@ -144,11 +148,26 @@ func (req *Request) MustDo(dest ...interface{}) {
 // efficiently get required info from deep nested structs. Original body is
 // returned if dest is *[]byte.
 func (req *Request) Do(dest ...interface{}) error {
+	if req.client.Debug {
+		dump, err := httputil.DumpRequestOut(req.Request, true)
+		if err != nil {
+			return err
+		}
+		log.Println(string(dump))
+	}
 	res, err := http.DefaultClient.Do(req.Request)
 	if err != nil {
 		return err
 	}
 	defer res.Body.Close()
+	if req.client.Debug {
+		dumpBody := strings.Contains(res.Header.Get("Content-Type"), "json")
+		dump, err := httputil.DumpResponse(res, dumpBody)
+		if err != nil {
+			return err
+		}
+		log.Println(string(dump))
+	}
 	b, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		return err

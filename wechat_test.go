@@ -16,6 +16,7 @@ func init() {
 	emptyClient = New("", "")
 	badClient = New(os.Getenv("WECHAT_APPID"), "00000000000000000000000000000000")
 	goodClient = New(os.Getenv("WECHAT_APPID"), os.Getenv("WECHAT_APPSECRET"))
+	goodClient.Debug = os.Getenv("DEBUG") == "1"
 }
 
 func TestRaceConditions(t *testing.T) {
