@@ -60,6 +60,8 @@ type (
 		BeginDate string `json:"begin_date"`
 		EndDate   string `json:"end_date"`
 	}
+	ReqBodyAnalysisGetWeeklyVisitTrend  = ReqBodyAnalysisGetDailyVisitTrend
+	ReqBodyAnalysisGetMonthlyVisitTrend = ReqBodyAnalysisGetDailyVisitTrend
 
 	ReqBodyCreateWXAQrcode struct {
 		Path  string `json:"path"`
@@ -75,10 +77,12 @@ type (
 )
 
 const (
-	UrlApi                        = "https://api.weixin.qq.com"
-	UrlAnalysisGetDailyVisitTrend = UrlApi + "/datacube/getweanalysisappiddailyvisittrend?access_token={ACCESS_TOKEN}"
-	UrlCreateWXAQrcode            = UrlApi + "/cgi-bin/wxaapp/createwxaqrcode?access_token={ACCESS_TOKEN}"
-	UrlGetWXACodeUnlimit          = UrlApi + "/wxa/getwxacodeunlimit?access_token={ACCESS_TOKEN}"
+	UrlApi                          = "https://api.weixin.qq.com"
+	UrlAnalysisGetDailyVisitTrend   = UrlApi + "/datacube/getweanalysisappiddailyvisittrend?access_token={ACCESS_TOKEN}"
+	UrlAnalysisGetWeeklyVisitTrend  = UrlApi + "/datacube/getweanalysisappidweeklyvisittrend?access_token={ACCESS_TOKEN}"
+	UrlAnalysisGetMonthlyVisitTrend = UrlApi + "/datacube/getweanalysisappidmonthlyvisittrend?access_token={ACCESS_TOKEN}"
+	UrlCreateWXAQrcode              = UrlApi + "/cgi-bin/wxaapp/createwxaqrcode?access_token={ACCESS_TOKEN}"
+	UrlGetWXACodeUnlimit            = UrlApi + "/wxa/getwxacodeunlimit?access_token={ACCESS_TOKEN}"
 )
 
 // New creates new client.
@@ -98,7 +102,7 @@ func (c *Client) AccessToken() *wechatAccessToken {
 
 // MustNewRequest is like NewRequest but panics if operation fails.
 func (c *Client) MustNewRequest(ctx context.Context, method, url string, reqBody interface{}) *Request {
-	req, err := c.NewRequest(ctx, "POST", UrlAnalysisGetDailyVisitTrend, reqBody)
+	req, err := c.NewRequest(ctx, "POST", url, reqBody)
 	if err != nil {
 		panic(err)
 	}
