@@ -66,6 +66,9 @@ type (
 	}
 	ReqBodyAnalysisGetWeeklyVisitTrend  = ReqBodyAnalysisGetDailyVisitTrend
 	ReqBodyAnalysisGetMonthlyVisitTrend = ReqBodyAnalysisGetDailyVisitTrend
+	ReqBodyAnalysisGetUserPortrait      = ReqBodyAnalysisGetDailyVisitTrend
+	ReqBodyAnalysisGetVisitDistribution = ReqBodyAnalysisGetDailyVisitTrend
+	ReqBodyAnalysisGetVisitPage         = ReqBodyAnalysisGetDailyVisitTrend
 
 	ReqBodyCreateWXAQrcode struct {
 		Path  string `json:"path"`
@@ -85,6 +88,9 @@ const (
 	UrlAnalysisGetDailyVisitTrend   = UrlApi + "/datacube/getweanalysisappiddailyvisittrend?access_token={ACCESS_TOKEN}"
 	UrlAnalysisGetWeeklyVisitTrend  = UrlApi + "/datacube/getweanalysisappidweeklyvisittrend?access_token={ACCESS_TOKEN}"
 	UrlAnalysisGetMonthlyVisitTrend = UrlApi + "/datacube/getweanalysisappidmonthlyvisittrend?access_token={ACCESS_TOKEN}"
+	UrlAnalysisGetUserPortrait      = UrlApi + "/datacube/getweanalysisappiduserportrait?access_token={ACCESS_TOKEN}"
+	UrlAnalysisGetVisitDistribution = UrlApi + "/datacube/getweanalysisappidvisitdistribution?access_token={ACCESS_TOKEN}"
+	UrlAnalysisGetVisitPage         = UrlApi + "/datacube/getweanalysisappidvisitpage?access_token={ACCESS_TOKEN}"
 	UrlCreateWXAQrcode              = UrlApi + "/cgi-bin/wxaapp/createwxaqrcode?access_token={ACCESS_TOKEN}"
 	UrlGetWXACodeUnlimit            = UrlApi + "/wxa/getwxacodeunlimit?access_token={ACCESS_TOKEN}"
 )
