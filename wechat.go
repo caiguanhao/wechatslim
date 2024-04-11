@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 )
 
 type (
@@ -37,15 +36,13 @@ type (
 	}
 
 	WechatError struct {
-		Code     int    `json:"errcode"`
-		Messsage string `json:"errmsg"`
+		Code    int    `json:"errcode"`
+		Message string `json:"errmsg"`
 	}
 
 	wechatAccessToken struct {
 		AccessToken string `json:"access_token"`
 		ExpiresIn   int    `json:"expires_in"`
-
-		createdAt time.Time
 	}
 
 	WechatSession struct {
@@ -201,19 +198,16 @@ func (req *Request) Do(dest ...interface{}) error {
 
 // GetAccessToken gets access token and caches it to client.AccessToken.
 func (c *Client) GetAccessToken(ctx context.Context) (*wechatAccessToken, error) {
-	t := c.AccessToken()
-	if t != nil && !t.Expired() {
-		return t, nil
-	}
-	url := UrlApi + "/cgi-bin/token?grant_type=client_credential&appid=" +
-		c.AppId + "&secret=" + c.AppSecret
-	req, err := c.NewRequest(ctx, "GET", url, nil)
+	url := UrlApi + "/cgi-bin/stable_token"
+	req, err := c.NewRequest(ctx, "POST", url, map[string]string{
+		"grant_type": "client_credential",
+		"appid":      c.AppId,
+		"secret":     c.AppSecret,
+	})
 	if err != nil {
 		return nil, err
 	}
-	data := wechatAccessToken{
-		createdAt: time.Now(),
-	}
+	var data wechatAccessToken
 	err = req.Do(&data)
 	if err != nil {
 		return nil, err
@@ -283,11 +277,7 @@ func (c *Client) JsCodeToSession(ctx context.Context, code string) (*WechatSessi
 }
 
 func (e WechatError) Error() string {
-	return "Error Code #" + strconv.Itoa(e.Code) + ": " + e.Messsage
-}
-
-func (t wechatAccessToken) Expired() bool {
-	return t.createdAt.Add(time.Duration(t.ExpiresIn-30) * time.Second).Before(time.Now())
+	return "Error Code #" + strconv.Itoa(e.Code) + ": " + e.Message
 }
 
 // Decrypt decrypts encrypted data given session key and IV.
